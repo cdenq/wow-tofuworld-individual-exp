@@ -61,3 +61,19 @@ IndividualXp.MaxXPRate = 10
 #
 
 IndividualXp.DefaultXPRate = 1
+
+#
+#   IndividualXp.Tofu.LockSettingSource
+#   IndividualXp.Tofu.LockSettingIndexes
+#
+#   Description: Tofu Worldview. While any of these player settings is non-zero, the character's personal rate is held at x1:
+#   .xp set, .xp default, and .xp disable are refused, and the stored rate is ignored. .xp view and .xp enable still work.
+#   The stored rate is kept and applies again when the setting goes back to 0 (the challenge ends at level 80).
+#   Indexes are space separated. mod-challenge-modes (Tofu fork): 6 = Quest Only, 9 = One Rate.
+#   Set LockSettingSource to "" to turn the lock off.
+#
+#   Default: "mod-challenge-modes" and "6 9"
+#
+
+IndividualXp.Tofu.LockSettingSource = "mod-challenge-modes"
+IndividualXp.Tofu.LockSettingIndexes = "6 9"

@@ -5,6 +5,8 @@
 #include "Player.h"
 #include "Object.h"
 #include "DataMap.h"
+#include <sstream>
+#include <vector>
 
 using namespace Acore::ChatCommands;
 
@@ -17,6 +19,9 @@ struct IndividualXpModule
 {
     bool Enabled, AnnounceModule, AnnounceRatesOnLogin;
     float MaxRate, DefaultRate;
+    // Tofu Worldview: player settings that lock the personal rate at x1 (mod-challenge-modes One Rate = 9, Quest Only = 6)
+    std::string LockSettingSource;
+    std::vector<uint32> LockSettingIndexes;
 };
 
 IndividualXpModule individualXp;
@@ -47,8 +52,34 @@ public:
         individualXp.AnnounceRatesOnLogin = sConfigMgr->GetOption<bool>("IndividualXp.AnnounceRatesOnLogin", true);
         individualXp.MaxRate = sConfigMgr->GetOption<float>("IndividualXp.MaxXPRate", 10.0f);
         individualXp.DefaultRate = sConfigMgr->GetOption<float>("IndividualXp.DefaultXPRate", 1.0f);
+        individualXp.LockSettingSource = sConfigMgr->GetOption<std::string>("IndividualXp.Tofu.LockSettingSource", "mod-challenge-modes");
+        individualXp.LockSettingIndexes.clear();
+        std::stringstream indexes(sConfigMgr->GetOption<std::string>("IndividualXp.Tofu.LockSettingIndexes", "6 9"));
+        std::string token;
+        while (indexes >> token)
+            individualXp.LockSettingIndexes.push_back(uint32(std::strtoul(token.c_str(), nullptr, 10)));
     }
 };
+
+// Tofu Worldview: true while a challenge (One Rate or Quest Only) holds this character's personal rate at x1. The rate the player chose is kept and comes back when the challenge ends at level 80.
+static bool IsRateLocked(Player* player)
+{
+    if (!player || individualXp.LockSettingSource.empty())
+        return false;
+    for (uint32 index : individualXp.LockSettingIndexes)
+        if (player->GetPlayerSetting(individualXp.LockSettingSource, index).value)
+            return true;
+    return false;
+}
+
+static bool RefuseIfLocked(ChatHandler* handler, Player* player)
+{
+    if (!IsRateLocked(player))
+        return false;
+    handler->SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+    handler->SetSentErrorMessage(true);
+    return true;
+}
 
 class PlayerXpRate : public DataMap::Base
 {
@@ -92,6 +123,10 @@ public:
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(ACORE_STRING_RATES_DISABLED);
                 }
+                else if (IsRateLocked(player))
+                {
+                    ChatHandler(player->GetSession()).SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+                }
                 else
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(ACORE_STRING_COMMAND_VIEW, player->CustomData.GetDefault<PlayerXpRate>("IndividualXP")->XPRate);
@@ -111,7 +146,7 @@ public:
 
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit* /*victim*/, uint8 /*xpSource*/) override
     {
-        if (individualXp.Enabled)
+        if (individualXp.Enabled && !IsRateLocked(player))
         {
             if (PlayerXpRate* data = player->CustomData.Get<PlayerXpRate>("IndividualXP"))
             {
@@ -165,6 +200,10 @@ public:
             handler->SetSentErrorMessage(true);
             return false;
         }
+        else if (IsRateLocked(player))
+        {
+            handler->SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+        }
         else
         {
             ChatHandler(handler->GetSession()).PSendSysMessage(ACORE_STRING_COMMAND_VIEW, player->CustomData.GetDefault<PlayerXpRate>("IndividualXP")->XPRate);
@@ -187,6 +226,9 @@ public:
         Player* player = handler->GetSession()->GetPlayer();
 
         if (!player)
+            return false;
+
+        if (RefuseIfLocked(handler, player))
             return false;
 
         if (player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_NO_XP_GAIN))
@@ -229,6 +271,9 @@ public:
         Player* player = handler->GetSession()->GetPlayer();
 
         if (!player)
+            return false;
+
+        if (RefuseIfLocked(handler, player))
             return false;
 
         if (!player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_NO_XP_GAIN))
@@ -284,6 +329,9 @@ public:
         Player* player = handler->GetSession()->GetPlayer();
 
         if (!player)
+            return false;
+
+        if (RefuseIfLocked(handler, player))
             return false;
 
         if (player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_NO_XP_GAIN))
