@@ -64,16 +64,23 @@ IndividualXp.DefaultXPRate = 1
 
 #
 #   IndividualXp.Tofu.LockSettingSource
-#   IndividualXp.Tofu.LockSettingIndexes
+#   IndividualXp.Tofu.OneRateIndex
+#   IndividualXp.Tofu.QuestOnlyIndex
+#   IndividualXp.Tofu.OneRateXP
+#   IndividualXp.Tofu.QuestOnlyXP
 #
-#   Description: Tofu Worldview. While any of these player settings is non-zero, the character's personal rate is held at x1:
-#   .xp set, .xp default, and .xp disable are refused, and the stored rate is ignored. .xp view and .xp enable still work.
-#   The stored rate is kept and applies again when the setting goes back to 0 (the challenge ends at level 80).
-#   Indexes are space separated. mod-challenge-modes (Tofu fork): 6 = Quest Only, 9 = One Rate.
-#   Set LockSettingSource to "" to turn the lock off.
+#   Description: Tofu Worldview. Challenges that set and lock the personal XP rate, read from player settings under LockSettingSource.
+#   While One Rate is active the rate is set to OneRateXP; otherwise, while Quest Only is active, it is set to QuestOnlyXP. One Rate wins, so the order the two challenges were taken in does not matter.
+#   The rate is overwritten (as if the player ran .xp set) at login, at the next XP gain after taking the challenge, and on .xp view. .xp set, .xp default, and .xp disable are refused while locked; .xp enable still works.
+#   When the challenge ends at level 80 the rate stays at the forced value and the player can change it again.
+#   Quest Only's kill XP of 0 is applied by mod-challenge-modes; the x2 for other XP is this rate.
+#   An index of -1 turns that challenge's lock off. Set LockSettingSource to "" to turn the feature off.
 #
-#   Default: "mod-challenge-modes" and "6 9"
+#   Default: "mod-challenge-modes", 9 (One Rate), 6 (Quest Only), 1, 2
 #
 
 IndividualXp.Tofu.LockSettingSource = "mod-challenge-modes"
-IndividualXp.Tofu.LockSettingIndexes = "6 9"
+IndividualXp.Tofu.OneRateIndex = 9
+IndividualXp.Tofu.QuestOnlyIndex = 6
+IndividualXp.Tofu.OneRateXP = 1
+IndividualXp.Tofu.QuestOnlyXP = 2

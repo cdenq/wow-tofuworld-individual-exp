@@ -19,9 +19,10 @@ struct IndividualXpModule
 {
     bool Enabled, AnnounceModule, AnnounceRatesOnLogin;
     float MaxRate, DefaultRate;
-    // Tofu Worldview: player settings that lock the personal rate at x1 (mod-challenge-modes One Rate = 9, Quest Only = 6)
+    // Tofu Worldview: challenge settings (mod-challenge-modes) that set and lock the personal rate. One Rate wins over Quest Only, whatever order they were taken in.
     std::string LockSettingSource;
-    std::vector<uint32> LockSettingIndexes;
+    int32 OneRateIndex, QuestOnlyIndex;
+    float OneRateXP, QuestOnlyXP;
 };
 
 IndividualXpModule individualXp;
@@ -53,30 +54,58 @@ public:
         individualXp.MaxRate = sConfigMgr->GetOption<float>("IndividualXp.MaxXPRate", 10.0f);
         individualXp.DefaultRate = sConfigMgr->GetOption<float>("IndividualXp.DefaultXPRate", 1.0f);
         individualXp.LockSettingSource = sConfigMgr->GetOption<std::string>("IndividualXp.Tofu.LockSettingSource", "mod-challenge-modes");
-        individualXp.LockSettingIndexes.clear();
-        std::stringstream indexes(sConfigMgr->GetOption<std::string>("IndividualXp.Tofu.LockSettingIndexes", "6 9"));
-        std::string token;
-        while (indexes >> token)
-            individualXp.LockSettingIndexes.push_back(uint32(std::strtoul(token.c_str(), nullptr, 10)));
+        individualXp.OneRateIndex = sConfigMgr->GetOption<int32>("IndividualXp.Tofu.OneRateIndex", 9);
+        individualXp.QuestOnlyIndex = sConfigMgr->GetOption<int32>("IndividualXp.Tofu.QuestOnlyIndex", 6);
+        individualXp.OneRateXP = sConfigMgr->GetOption<float>("IndividualXp.Tofu.OneRateXP", 1.0f);
+        individualXp.QuestOnlyXP = sConfigMgr->GetOption<float>("IndividualXp.Tofu.QuestOnlyXP", 2.0f);
     }
 };
 
-// Tofu Worldview: true while a challenge (One Rate or Quest Only) holds this character's personal rate at x1. The rate the player chose is kept and comes back when the challenge ends at level 80.
-static bool IsRateLocked(Player* player)
+static bool ChallengeActive(Player* player, int32 index)
+{
+    return index >= 0 && player->GetPlayerSetting(individualXp.LockSettingSource, uint32(index)).value != 0;
+}
+
+// Tofu Worldview: the rate a challenge forces on this character, or 0 when no challenge locks it. One Rate (x1) wins over Quest Only (x2), so the order the two were taken in does not matter.
+static float ForcedRate(Player* player)
 {
     if (!player || individualXp.LockSettingSource.empty())
-        return false;
-    for (uint32 index : individualXp.LockSettingIndexes)
-        if (player->GetPlayerSetting(individualXp.LockSettingSource, index).value)
-            return true;
-    return false;
+        return 0.0f;
+    if (ChallengeActive(player, individualXp.OneRateIndex))
+        return individualXp.OneRateXP;
+    if (ChallengeActive(player, individualXp.QuestOnlyIndex))
+        return individualXp.QuestOnlyXP;
+    return 0.0f;
+}
+
+// "locked at x1 by your One Rate challenge", "locked at x1 by your One Rate and Quest Only challenges", or "locked at x2 by your Quest Only challenge"
+static std::string LockReason(Player* player)
+{
+    bool const oneRate = ChallengeActive(player, individualXp.OneRateIndex);
+    bool const questOnly = ChallengeActive(player, individualXp.QuestOnlyIndex);
+    std::ostringstream text;
+    text << "locked at x" << ForcedRate(player) << " by your ";
+    if (oneRate && questOnly)
+        text << "One Rate and Quest Only challenges";
+    else if (oneRate)
+        text << "One Rate challenge";
+    else
+        text << "Quest Only challenge";
+    text << " until level 80.";
+    return text.str();
+}
+
+static std::string ForcedRateText(Player* player)
+{
+    return "[XP] Your XP rate is " + LockReason(player);
 }
 
 static bool RefuseIfLocked(ChatHandler* handler, Player* player)
 {
-    if (!IsRateLocked(player))
+    float const forced = ForcedRate(player);
+    if (forced <= 0.0f)
         return false;
-    handler->SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+    handler->SendSysMessage("[XP] You can't change your XP rate: it is " + LockReason(player));
     handler->SetSentErrorMessage(true);
     return true;
 }
@@ -88,6 +117,20 @@ public:
     PlayerXpRate(float XPRate) : XPRate(XPRate) {}
     float XPRate = 1.0f;
 };
+
+// Tofu Worldview: overwrite the stored rate with the challenge's rate (the same as the player running .xp set). Returns true when it changed. After level 80 the challenge ends and the player can change the rate again.
+static bool ApplyForcedRate(Player* player)
+{
+    float const forced = ForcedRate(player);
+    if (forced <= 0.0f)
+        return false;
+    PlayerXpRate* data = player->CustomData.GetDefault<PlayerXpRate>("IndividualXP");
+    if (data->XPRate == forced)
+        return false;
+    data->XPRate = forced;
+    CharacterDatabase.Execute("REPLACE INTO `individualxp` (`CharacterGUID`, `XPRate`) VALUES ('{}', '{}');", player->GetGUID().GetCounter(), forced);
+    return true;
+}
 
 class IndividualXP : public PlayerScript
 {
@@ -108,6 +151,8 @@ public:
             player->CustomData.Set("IndividualXP", new PlayerXpRate(fields[0].Get<float>()));
         }
 
+        ApplyForcedRate(player);
+
         if (individualXp.Enabled)
         {
             // Announce Module
@@ -123,9 +168,9 @@ public:
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage(ACORE_STRING_RATES_DISABLED);
                 }
-                else if (IsRateLocked(player))
+                else if (ForcedRate(player) > 0.0f)
                 {
-                    ChatHandler(player->GetSession()).SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+                    ChatHandler(player->GetSession()).SendSysMessage(ForcedRateText(player));
                 }
                 else
                 {
@@ -146,8 +191,12 @@ public:
 
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit* /*victim*/, uint8 /*xpSource*/) override
     {
-        if (individualXp.Enabled && !IsRateLocked(player))
+        if (individualXp.Enabled)
         {
+            // A challenge taken since login (at the shrine) sets the rate before this XP is counted
+            if (ApplyForcedRate(player))
+                ChatHandler(player->GetSession()).SendSysMessage(ForcedRateText(player));
+
             if (PlayerXpRate* data = player->CustomData.Get<PlayerXpRate>("IndividualXP"))
             {
                 amount = static_cast<uint32>(std::round(static_cast<float>(amount) * data->XPRate));
@@ -200,9 +249,10 @@ public:
             handler->SetSentErrorMessage(true);
             return false;
         }
-        else if (IsRateLocked(player))
+        else if (ForcedRate(player) > 0.0f)
         {
-            handler->SendSysMessage("[XP] Your XP rate is locked at x1 by your One Rate or Quest Only challenge until level 80.");
+            ApplyForcedRate(player);
+            handler->SendSysMessage(ForcedRateText(player));
         }
         else
         {
